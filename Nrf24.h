@@ -170,16 +170,14 @@ class Nrf24 {
 		/* Interrupt */
 		void onInterrupt();		
 		uint8 getIRQPin();
-		void useIRQPin(uint8, bool);		
+		void useIRQPin(int8);		
 		void attachOnPayloadReceiveCallback(void (*)(void));
 		
 	private:
 		Port _port;
 		volatile bool _dynamicPayload;
-		volatile bool _useInterrupt;
-		
-		volatile byte _status;
-		
+		volatile bool _useInterrupt;		
+		volatile byte _status;		
 		void (*_onPayloadReceiveCallback)(void);
 		void _fetchStatus();
 		void _setBit(byte*, uint8);

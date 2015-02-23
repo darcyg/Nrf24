@@ -53,7 +53,7 @@ void Nrf24::begin(Nrf24Mode mode){
 	//Power on reset needs at least 10.3mS	
 	delay(11);	
 	
-	//By default enable pipe0
+	//By default set pipe0 length for the receiver
 	setPipe(0, 32);
 	setMode(mode);
 }
@@ -65,18 +65,22 @@ uint8 Nrf24::getIRQPin(){
 
 void Nrf24::onInterrupt(){
 	if (!_useInterrupt) return;
-	
 	//Avoid triggering in the middle of high to low transition
 	delayMicroseconds(1);
-	if(digitalRead(_port.irq) == 0){
+	if(digitalRead(_port.irq) == 0){	
 		_fetchStatus();
 	}
 }
 
-void Nrf24::useIRQPin(uint8 pin, bool enable){
-	_useInterrupt = enable;
-	_port.irq = pin;	
-	pinMode(_port.irq, INPUT);
+void Nrf24::useIRQPin(int8 pin){
+	if (pin > 0){
+		_useInterrupt = true;
+		_port.irq = pin;	
+		pinMode(_port.irq, INPUT);
+		writeRegister(NRF24_REG_CONFIG, (readRegister(NRF24_REG_CONFIG) & 0x0F));
+	} else {
+		_useInterrupt = false;		
+	}
 }
 
 
@@ -262,10 +266,10 @@ void Nrf24::_unsetBit(byte* reg, uint8 bit){
 }
 
 void Nrf24::setMode(Nrf24Mode mode){
-     uint8 config, powerStatus;
+     uint8 config, isPoweredUp;
 	 
 	 config = readRegister(NRF24_REG_CONFIG);	 
-	 powerStatus = config & NRF24_CONFIG_PWR_UP;
+	 isPoweredUp = config & NRF24_CONFIG_PWR_UP;	//Initial power status
      
      if (mode == NRF24_MODE_OFF){
         config &= ~(1 << 1);
@@ -296,7 +300,7 @@ void Nrf24::setMode(Nrf24Mode mode){
      
     //  According to datasheet the device needs at least 
 	//	1.5mS to go to standby-I from power down mode otherwise 130uS	 
-     if(powerStatus)
+     if(isPoweredUp)
          delayMicroseconds(150);
      else
          delay(2);
