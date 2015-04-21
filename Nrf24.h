@@ -85,22 +85,30 @@
 
 
 
-/* NRF24 Config register bits */
-#define  NRF24_CONFIG_PRIM_RX		0x01
-#define  NRF24_CONFIG_PWR_UP		0x02
-#define  NRF24_CONFIG_CRCO			0x04
-#define  NRF24_CONFIG_EN_CRC		0x08
-#define  NRF24_CONFIG_MASK_MAX_RT	0x10
-#define  NRF24_CONFIG_MASK_TX_DS	0x20
-#define  NRF24_CONFIG_MASK_RX_DR	0x40
+/* NRF24 CONFIG register bits */
+#define  NRF24_CONFIG_PRIM_RX		(1 << 0)
+#define  NRF24_CONFIG_PWR_UP		(1 << 1)
+#define  NRF24_CONFIG_CRCO			(1 << 2)
+#define  NRF24_CONFIG_EN_CRC		(1 << 3)
+#define  NRF24_CONFIG_MASK_MAX_RT	(1 << 4)
+#define  NRF24_CONFIG_MASK_TX_DS	(1 << 5)
+#define  NRF24_CONFIG_MASK_RX_DR	(1 << 6)
 
 
-/* Nrf24 Status register bits */
-#define  NRF24_STATUS_TX_FULL   0x00
-#define  NRF24_STATUS_RX_P_NO   0x0E
-#define  NRF24_STATUS_MAX_RT    0x10
-#define  NRF24_STATUS_TX_DS     0x20
-#define  NRF24_STATUS_RX_DR     0x40
+/* Nrf24 STATUS register bits */
+#define  NRF24_STATUS_TX_FULL   (1 << 0)
+#define  NRF24_STATUS_RX_P_NO   ((1 << 1) | (1 << 2) | (1 << 3))
+#define  NRF24_STATUS_MAX_RT    (1 << 4)
+#define  NRF24_STATUS_TX_DS     (1 << 5)
+#define  NRF24_STATUS_RX_DR     (1 << 6)
+
+
+/* Nrf24 FIFO_STATUS register bits */
+#define  NRF24_FIFO_STATUS_RX_EMPTY		(1 << 0)
+#define  NRF24_FIFO_STATUS_RX_FULL		(1 << 1)
+#define  NRF24_FIFO_STATUS_TX_EMPTY		(1 << 4)
+#define  NRF24_FIFO_STATUS_TX_FULL		(1 << 5)
+#define  NRF24_FIFO_STATUS_TX_REUSE		(1 << 6)
 
 typedef enum {
 	PRIM_RX		= 0,
@@ -131,6 +139,14 @@ typedef enum{
 	NRF24_READ  = 1
 } Nrf24RW;
 
+typedef enum{
+	NRF24_TX_SENDING = 0,
+	NRF24_TX_SENT,
+	NRF24_TX_FAILED,
+	NRF24_TX_FIFO_FULL,
+	NRF24_TX_FIFO_EMPTY,
+} Nrf24TxStatus;
+
 class Nrf24 {	
 	public:
 		typedef	struct {
@@ -150,7 +166,7 @@ class Nrf24 {
 		void writeRegister(byte, uint8);
 		
 		/* Configure device */
-		void setAutoRetransmit(uint8);
+		void setAutoRetransmit(uint8, uint16);
 		void setDateRate(Nrf24DataRate);
 		void setPayloadSize(uint8, uint8);
 		void setPipe(uint8, bool);
@@ -172,14 +188,15 @@ class Nrf24 {
 		uint8 getIRQPin();
 		void useIRQPin(int8);		
 		void attachOnPayloadReceiveCallback(void (*)(void));
+		byte getStatus();
+		Port _port;
 		
 	private:
-		Port _port;
+
 		volatile bool _dynamicPayload;
 		volatile bool _useInterrupt;		
 		volatile byte _status;		
 		void (*_onPayloadReceiveCallback)(void);
-		void _fetchStatus();
 		void _setBit(byte*, uint8);
 		void _unsetBit(byte*, uint8);		
 };

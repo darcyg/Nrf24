@@ -32,6 +32,10 @@
 #include "Nrf24.h"
 
 Nrf24::Nrf24(HardwareSPI *spi_dev, uint8 csn_pin, uint8 ce_pin){		
+	_dynamicPayload = false;
+	_useInterrupt = false;
+	_onPayloadReceiveCallback = NULL;
+	
 	_port.csn = csn_pin;
 	_port.ce = ce_pin;
 	_port.spi = spi_dev;
@@ -39,20 +43,14 @@ Nrf24::Nrf24(HardwareSPI *spi_dev, uint8 csn_pin, uint8 ce_pin){
 	pinMode(_port.csn, OUTPUT);
 	pinMode(_port.ce, OUTPUT);
 	
-	_dynamicPayload = false;
-	_useInterrupt = false;
-	_onPayloadReceiveCallback = NULL;
+	digitalWrite(_port.csn, HIGH);
+	digitalWrite(_port.ce, LOW);			
+	_port.spi->begin(SPI_9MHZ, MSBFIRST, 0);	
+	
 }
 
 
-void Nrf24::begin(Nrf24Mode mode){		
-	digitalWrite(_port.csn, HIGH);
-	digitalWrite(_port.ce, LOW);			
-	_port.spi->begin(SPI_9MHZ, MSBFIRST, 0);		
-	
-	//Power on reset needs at least 10.3mS	
-	delay(11);	
-	
+void Nrf24::begin(Nrf24Mode mode){	
 	//By default set pipe0 length for the receiver
 	setPipe(0, 32);
 	setMode(mode);
@@ -66,9 +64,9 @@ uint8 Nrf24::getIRQPin(){
 void Nrf24::onInterrupt(){
 	if (!_useInterrupt) return;
 	//Avoid triggering in the middle of high to low transition
-	delayMicroseconds(1);
+	delayMicroseconds(2);
 	if(digitalRead(_port.irq) == 0){	
-		_fetchStatus();
+		getStatus();
 	}
 }
 
@@ -85,18 +83,14 @@ void Nrf24::useIRQPin(int8 pin){
 
 
 uint8 Nrf24::txDataSent(){	
-	if(!_useInterrupt)		
-		_fetchStatus();
-	
+	if(!_useInterrupt){
+		//delayMicroseconds(50);		
+		getStatus();
+	}
 	//Make sure the device is connected properly
 	if (_status != 0xFF){
-		if(_status & NRF24_STATUS_MAX_RT){
-			writeRegister(NRF24_REG_STATUS, NRF24_STATUS_MAX_RT);
-			return 2;
-		} else if (_status & NRF24_STATUS_TX_DS){
-			writeRegister(NRF24_REG_STATUS, NRF24_STATUS_TX_DS);
-			return 1;
-		}	
+		return (_status & (NRF24_STATUS_TX_DS | NRF24_STATUS_MAX_RT));
+		//writeRegister(NRF24_REG_STATUS, NRF24_STATUS_MAX_RT | NRF24_STATUS_TX_DS);				
 	}
 	return 0;
 }
@@ -104,17 +98,16 @@ uint8 Nrf24::txDataSent(){
 void Nrf24::attachOnPayloadReceiveCallback(void (*callback)(void)){
 	_onPayloadReceiveCallback = callback;
 }
-
-void Nrf24::_fetchStatus(){
+ 
+byte Nrf24::getStatus(){
+	//_fifoStatus = readRegister(NRF24_REG_FIFO_STATUS);	
 	_status = readRegister(NRF24_REG_STATUS);	
-	if ((_status & NRF24_STATUS_RX_DR) && _onPayloadReceiveCallback){
-		_onPayloadReceiveCallback();
-	}
+	return _status;	
 }
 
 uint8 Nrf24::available(){
 	if(!_useInterrupt)		
-		_fetchStatus();		
+		getStatus();		
 	
 	//Make sure the device is connected properly
 	if ((_status != 0xFF) && (_status & NRF24_STATUS_RX_DR)){
@@ -130,6 +123,11 @@ uint8 Nrf24::available(){
 	return 0;
 }
 
+void Nrf24::setAutoRetransmit(uint8 count, uint16 delay_us){
+	byte value = ((count > 15) ? 15 : count) & 0x0F;
+	writeRegister(NRF24_REG_SETUP_RETR, value);		
+}
+
 void Nrf24::read(byte *buffer, uint8 length){
 	execCmd(NRF24_CMD_R_RX_PAYLOAD, NRF24_READ, buffer, length);
 	writeRegister(NRF24_REG_STATUS, NRF24_STATUS_RX_DR);		
@@ -137,8 +135,7 @@ void Nrf24::read(byte *buffer, uint8 length){
 
 void Nrf24::send(byte* buffer, uint8 length){
 	
-	flushTx();
-	writeRegister(NRF24_REG_STATUS, NRF24_STATUS_MAX_RT);
+	writeRegister(NRF24_REG_STATUS, NRF24_STATUS_MAX_RT | NRF24_STATUS_TX_DS);
 	
 	digitalWrite(_port.ce, LOW);
 	digitalWrite(_port.csn, LOW);
@@ -236,28 +233,6 @@ void Nrf24::execCmd(byte cmd, Nrf24RW read_write, byte* buffer, uint8 length){
 	digitalWrite(_port.csn, HIGH);	 
 }
 
-/*
-void Nrf24::read(uint8 cmd, uint8* buffer, uint8 length){
-	digitalWrite(_port.csn, LOW);	 
-	_port.spi->write(cmd);
-	if (buffer){
-		while(length--)
-			*buffer++ = _port.spi->read();
-	}
-	digitalWrite(_port.csn, HIGH);	 
-}
-
-void Nrf24::write(uint8 cmd, uint8* data, uint8 length){
-	digitalWrite(_port.csn, LOW);	 
-	_port.spi->write(cmd);
-	if (data){
-		while(length--)
-			_port.spi->write(*data++);
-	}
-	digitalWrite(_port.csn, HIGH);	 
-}
-*/
-
 void Nrf24::_setBit(byte* reg, uint8 bit){
 	*reg |= (1 << bit);
 }
@@ -265,43 +240,44 @@ void Nrf24::_unsetBit(byte* reg, uint8 bit){
 	*reg &= ~(1 << bit);
 }
 
-void Nrf24::setMode(Nrf24Mode mode){
-     uint8 config, isPoweredUp;
-	 
-	 config = readRegister(NRF24_REG_CONFIG);	 
-	 isPoweredUp = config & NRF24_CONFIG_PWR_UP;	//Initial power status
-     
-     if (mode == NRF24_MODE_OFF){
-        config &= ~(1 << 1);
-     } else {
+void Nrf24::setMode(Nrf24Mode mode){   
+	byte config = readRegister(NRF24_REG_CONFIG); 
+	uint8 isPoweredUp = config & NRF24_CONFIG_PWR_UP;	//Initial power status	 
+	
+	//At first go to standby-I
+	digitalWrite(_port.ce, LOW);
+	
+    if (mode == NRF24_MODE_OFF){
+        config &= ~NRF24_CONFIG_PWR_UP;
+    } else {
         config |= NRF24_CONFIG_PWR_UP;
         switch (mode){
            case NRF24_MODE_RX :
                 config |= NRF24_CONFIG_PRIM_RX;
+				writeRegister(NRF24_REG_CONFIG, config);				
 				digitalWrite(_port.ce, HIGH);
                 break;
 
            case NRF24_MODE_STANDBY2 :
-                flushRx();
+                flushTx();
+				config &= ~NRF24_CONFIG_PRIM_RX;
+				writeRegister(NRF24_REG_CONFIG, config);
                 digitalWrite(_port.ce, HIGH);
                 break;
 		   
 		   default:
-           case NRF24_MODE_STANDBY1 :
-                flushTx();
-                
+           case NRF24_MODE_STANDBY1 :                
            case NRF24_MODE_TX :
                 config &= ~NRF24_CONFIG_PRIM_RX;
-                digitalWrite(_port.ce, LOW);
+				writeRegister(NRF24_REG_CONFIG, config);
                 break;				
         }
      }
-     writeRegister(NRF24_REG_CONFIG, config);
      
     //  According to datasheet the device needs at least 
 	//	1.5mS to go to standby-I from power down mode otherwise 130uS	 
      if(isPoweredUp)
-         delayMicroseconds(150);
+         delayMicroseconds(200);
      else
          delay(2);
 }
